@@ -3,9 +3,8 @@ import React, { useState } from "react";
 import {
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   Text,
-  View,
+  View
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { apiFetch } from "../../lib/api";
@@ -75,12 +74,6 @@ export default function LoginScreen() {
           />
 
           <View className="h-4" />
-
-          <Pressable onPress={() => {}}>
-            <Text className="text-center text-gray-500 underline">
-              Glömt lösenord?
-            </Text>
-          </Pressable>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
