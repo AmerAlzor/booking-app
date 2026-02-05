@@ -1,95 +1,143 @@
-import React, { useMemo, useState } from "react";
-import { Alert, Pressable, Text, View } from "react-native";
+/*import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+
 import Button from "../../components/Button";
 import Input from "../../components/Input";
+import { apiFetch } from "../../lib/api";
+import { getToken } from "../../lib/tokenStorage";
 
-type BookingStatus = "PENDING" | "APPROVED" | "DENIED" | "CANCELLED";
+type BookingStatus = "pending" | "approved" | "denied" | "cancelled";
 
 type Booking = {
   id: string;
-  date: string; // "YYYY-MM-DD"
-  time: string; // "HH:mm"
+  dateTimeISO: string;
   partySize: number;
   status: BookingStatus;
-  createdAt: string; // ISO string
-  cancelledAt?: string | null;
+  createdAt: string;
+  cancelledAt: string | null;
+};
+
+type NotificationDto = {
+  id: string;
+  title: string;
+  message: string;
+  readAt: string | null;
+  createdAt: string;
 };
 
 function statusLabel(status: BookingStatus) {
   switch (status) {
-    case "PENDING":
+    case "pending":
       return "Pågående";
-    case "APPROVED":
+    case "approved":
       return "Godkänd";
-    case "DENIED":
+    case "denied":
       return "Nekad";
-    case "CANCELLED":
+    case "cancelled":
       return "Avbokad";
   }
 }
 
-function canCancel(b: Booking) {
-  // Endast pending eller approved, och mindre än 24 timmar sedan skapad
-  if (!(b.status === "PENDING" || b.status === "APPROVED")) return false;
-
-  const created = new Date(b.createdAt).getTime();
-  const now = Date.now();
-  const hours = (now - created) / (1000 * 60 * 60);
-
-  return hours < 24;
+function hoursSince(iso: string) {
+  return (Date.now() - new Date(iso).getTime()) / (1000 * 60 * 60);
 }
 
-function makeId() {
-  return Math.random().toString(36).slice(2, 10);
+function canCancel(b: Booking) {
+  if (!(b.status === "pending" || b.status === "approved")) return false;
+  return hoursSince(b.createdAt) < 24;
+}
+
+function cancelReason(b: Booking) {
+  if (b.status === "denied" || b.status === "cancelled") {
+    return "Bokningen kan inte avbokas i detta läge.";
+  }
+  if (hoursSince(b.createdAt) >= 24) {
+    return "Du kan bara avboka inom 24 timmar från att bokningen skapades.";
+  }
+  return "Du kan endast avboka om bokningen är pågående eller godkänd.";
+}
+
+function formatDateTime(iso: string) {
+  const d = new Date(iso);
+  return {
+    date: d.toLocaleDateString(),
+    time: d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+  };
 }
 
 export default function BookingsScreen() {
-  // Ny bokning (enkla inputs)
-  const [date, setDate] = useState(""); // t.ex. 2026-02-02
-  const [time, setTime] = useState(""); // t.ex. 18:30
+  const [token, setToken] = useState<string | null>(null);
+
+  const [date, setDate] = useState(""); // YYYY-MM-DD
+  const [time, setTime] = useState(""); // HH:mm
   const [partySize, setPartySize] = useState("2");
 
-  // UI-state
+  const [bookings, setBookings] = useState<Booking[]>([]);
   const [loadingList, setLoadingList] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [showingNotificationId, setShowingNotificationId] = useState<
+    string | null
+  >(null);
 
-  // Fejk-bokningar (för utseende)
-  const [bookings, setBookings] = useState<Booking[]>([
-    {
-      id: "b1",
-      date: "2026-02-02",
-      time: "18:30",
-      partySize: 2,
-      status: "PENDING",
-      createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), // 2h sen
-    },
-    {
-      id: "b2",
-      date: "2026-02-01",
-      time: "20:00",
-      partySize: 4,
-      status: "APPROVED",
-      createdAt: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(), // 6h sen
-    },
-    {
-      id: "b3",
-      date: "2026-01-30",
-      time: "19:00",
-      partySize: 3,
-      status: "DENIED",
-      createdAt: new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString(), // 30h sen
-    },
-    {
-      id: "b4",
-      date: "2026-01-29",
-      time: "17:00",
-      partySize: 2,
-      status: "CANCELLED",
-      createdAt: new Date(Date.now() - 10 * 60 * 60 * 1000).toISOString(),
-      cancelledAt: new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString(),
-    },
-  ]);
+  const checkNotifications = useCallback(async () => {
+    if (!token) return;
+
+    try {
+      const data = (await apiFetch("/api/notifications", {
+        method: "GET",
+      })) as { notifications: NotificationDto[] };
+
+      const unread = data.notifications.find((n) => !n.readAt);
+      if (!unread) return;
+
+      // undvik spam (samma notis om och om igen)
+      if (showingNotificationId === unread.id) return;
+
+      setShowingNotificationId(unread.id);
+
+      Alert.alert(unread.title, unread.message, [
+        {
+          text: "OK",
+          onPress: async () => {
+            try {
+              await apiFetch(`/api/notifications/${unread.id}/read`, {
+                method: "POST",
+              });
+            } catch {
+              // ignorera
+            } finally {
+              setShowingNotificationId(null);
+            }
+          },
+        },
+      ]);
+    } catch {
+      // inga alerts på fel – polling ska vara tyst
+    }
+  }, [token, showingNotificationId]);
+
+  useEffect(() => {
+    if (!token) return;
+
+    // kör direkt när screen öppnas
+    checkNotifications();
+
+    const interval = setInterval(() => {
+      checkNotifications();
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [token, checkNotifications]);
+
+  // Läs token när skärmen mountar
+  useEffect(() => {
+    (async () => {
+      const t = await getToken();
+      setToken(t);
+    })();
+  }, []);
 
   const sorted = useMemo(() => {
     return [...bookings].sort(
@@ -98,63 +146,101 @@ export default function BookingsScreen() {
     );
   }, [bookings]);
 
-  async function fakeRefresh() {
-    setLoadingList(true);
-    // bara för UI-känsla
-    setTimeout(() => setLoadingList(false), 600);
-  }
+  const loadBookings = useCallback(async () => {
+    if (!token) return;
 
-  async function createBookingLocal() {
-    if (!date.trim()) return Alert.alert("Fyll i datum", "Ange ett datum.");
-    if (!time.trim()) return Alert.alert("Fyll i tid", "Ange en tid.");
+    setLoadingList(true);
+    try {
+      const data = (await apiFetch("/api/bookings", { method: "GET" })) as {
+        bookings: Booking[];
+      };
+      setBookings(data.bookings);
+    } catch (e: any) {
+      Alert.alert("Kunde inte hämta bokningar", e?.message ?? "Okänt fel");
+    } finally {
+      setLoadingList(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (token) loadBookings();
+    else setBookings([]);
+  }, [token, loadBookings]);
+
+  const createBooking = useCallback(async () => {
+    if (!token)
+      return Alert.alert("Inte inloggad", "Logga in för att skapa bokning.");
+
+    const d = date.trim();
+    const t = time.trim();
     const n = Number(partySize);
-    if (!Number.isFinite(n) || n <= 0)
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+      return Alert.alert("Datumformat", "Använd formatet YYYY-MM-DD.");
+    }
+    if (!/^\d{2}:\d{2}$/.test(t)) {
+      return Alert.alert("Tidsformat", "Använd formatet HH:mm.");
+    }
+    if (!Number.isFinite(n) || n <= 0) {
       return Alert.alert("Antal personer", "Ange ett giltigt antal.");
+    }
+
+    const [yy, mm, dd] = d.split("-").map(Number);
+    const [hh, min] = t.split(":").map(Number);
+    const local = new Date(yy, mm - 1, dd, hh, min, 0, 0);
+    const dateTimeISO = local.toISOString();
 
     setSubmitting(true);
+    try {
+      const data = (await apiFetch("/api/bookings", {
+        method: "POST",
+        body: JSON.stringify({ dateTimeISO, partySize: n }),
+      })) as { booking: Booking };
 
-    // bara för UI-känsla
-    setTimeout(() => {
-      const created: Booking = {
-        id: makeId(),
-        date,
-        time,
-        partySize: n,
-        status: "PENDING",
-        createdAt: new Date().toISOString(),
-      };
-
-      setBookings((prev) => [created, ...prev]);
+      setBookings((prev) => [data.booking, ...prev]);
       setTime("");
+      Alert.alert(
+        "Bokning skapad",
+        "Status är pågående (pending) tills admin hanterar den.",
+      );
+    } catch (e: any) {
+      Alert.alert("Kunde inte skapa bokning", e?.message ?? "Okänt fel");
+    } finally {
       setSubmitting(false);
+    }
+  }, [token, date, time, partySize]);
 
-      Alert.alert("Bokning skapad", "Din bokning är nu pågående (pending).");
-    }, 500);
-  }
+  const cancelBooking = useCallback(
+    async (b: Booking) => {
+      if (!token) return;
+      if (!canCancel(b)) return Alert.alert("Kan inte avboka", cancelReason(b));
 
-  function cancelBookingLocal(id: string) {
-    setBookings((prev) =>
-      prev.map((b) =>
-        b.id === id
-          ? {
-              ...b,
-              status: "CANCELLED",
-              cancelledAt: new Date().toISOString(),
-            }
-          : b,
-      ),
-    );
-  }
+      setCancellingId(b.id);
+      try {
+        const data = (await apiFetch(`/api/bookings/${b.id}/cancel`, {
+          method: "POST",
+        })) as { booking: Booking };
+
+        setBookings((prev) =>
+          prev.map((x) => (x.id === b.id ? data.booking : x)),
+        );
+      } catch (e: any) {
+        Alert.alert("Kunde inte avboka", e?.message ?? "Okänt fel");
+      } finally {
+        setCancellingId(null);
+      }
+    },
+    [token],
+  );
 
   return (
     <SafeAreaView className="flex-1 bg-white">
-      <View className="flex-1 p-4">
+      <ScrollView className="flex-1">
         <Text className="text-3xl font-bold">Bokningar</Text>
         <Text className="mt-2 text-gray-600">
           Skapa en ny bokning och se dina tidigare bokningar.
         </Text>
 
-        {/* Ny bokning */}
         <View className="mt-6 rounded-2xl border border-gray-200 p-4">
           <Text className="text-lg font-semibold">Ny bokning</Text>
           <Text className="mt-1 text-gray-600">
@@ -169,14 +255,12 @@ export default function BookingsScreen() {
             onChangeText={setDate}
             placeholder="YYYY-MM-DD"
           />
-
           <Input
             label="Tid"
             value={time}
             onChangeText={setTime}
             placeholder="HH:mm"
           />
-
           <Input
             label="Antal personer"
             value={partySize}
@@ -187,15 +271,21 @@ export default function BookingsScreen() {
 
           <Button
             title={submitting ? "Skapar..." : "Skapa bokning"}
-            onPress={createBookingLocal}
+            onPress={createBooking}
+            disabled={!token || submitting}
           />
+
+          {!token && (
+            <Text className="mt-2 text-gray-500">
+              Logga in för att kunna skapa en bokning.
+            </Text>
+          )}
         </View>
 
-        {/* Mina bokningar */}
         <View className="mt-6">
           <View className="flex-row items-center justify-between">
             <Text className="text-lg font-semibold">Mina bokningar</Text>
-            <Pressable onPress={fakeRefresh} disabled={loadingList}>
+            <Pressable onPress={loadBookings} disabled={loadingList || !token}>
               <Text className="text-gray-600 underline">
                 {loadingList ? "Uppdaterar..." : "Uppdatera"}
               </Text>
@@ -204,12 +294,18 @@ export default function BookingsScreen() {
 
           <View className="h-3" />
 
-          {sorted.length === 0 ? (
+          {!token ? (
+            <Text className="text-gray-600">
+              Logga in för att se dina bokningar.
+            </Text>
+          ) : sorted.length === 0 ? (
             <Text className="text-gray-600">Inga bokningar ännu.</Text>
           ) : (
             <View className="gap-3">
               {sorted.map((b) => {
+                const dt = formatDateTime(b.dateTimeISO);
                 const cancellable = canCancel(b);
+                const isCancelling = cancellingId === b.id;
 
                 return (
                   <View
@@ -218,7 +314,7 @@ export default function BookingsScreen() {
                   >
                     <View className="flex-row items-center justify-between">
                       <Text className="font-semibold">
-                        {b.date} • {b.time}
+                        {dt.date} • {dt.time}
                       </Text>
                       <Text className="text-gray-600">
                         {statusLabel(b.status)}
@@ -229,13 +325,15 @@ export default function BookingsScreen() {
                       Antal personer: {b.partySize}
                     </Text>
 
-                    {/* Avbokning */}
                     <View className="mt-3">
                       <Button
-                        title="Avboka"
+                        title={isCancelling ? "Avbokar..." : "Avboka"}
                         variant="secondary"
                         onPress={() => {
-                          if (!cancellable) return;
+                          if (!cancellable) {
+                            Alert.alert("Kan inte avboka", cancelReason(b));
+                            return;
+                          }
 
                           Alert.alert(
                             "Avboka bokning?",
@@ -245,18 +343,23 @@ export default function BookingsScreen() {
                               {
                                 text: "Ja, avboka",
                                 style: "destructive",
-                                onPress: () => cancelBookingLocal(b.id),
+                                onPress: () => cancelBooking(b),
                               },
                             ],
                           );
                         }}
-                        disabled={!cancellable}
+                        disabled={!cancellable || isCancelling}
                       />
 
                       {!cancellable && (
                         <Text className="mt-2 text-gray-500">
-                          Du kan endast avboka om bokningen är pågående eller
-                          godkänd och skapades för mindre än 24 timmar sedan.
+                          {cancelReason(b)}
+                        </Text>
+                      )}
+
+                      {b.status === "cancelled" && b.cancelledAt && (
+                        <Text className="mt-2 text-gray-500">
+                          Avbokad: {new Date(b.cancelledAt).toLocaleString()}
                         </Text>
                       )}
                     </View>
@@ -266,7 +369,7 @@ export default function BookingsScreen() {
             </View>
           )}
         </View>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
-}
+}*/

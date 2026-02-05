@@ -16,7 +16,7 @@ export default function RegisterScreen() {
   const [confirm, setConfirm] = useState("");
 
   return (
-    <SafeAreaView className="flex-1 bg-white">
+    <SafeAreaView className="flex-1 bg-white px-4">
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         className="flex-1"

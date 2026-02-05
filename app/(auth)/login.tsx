@@ -21,7 +21,7 @@ export default function LoginScreen() {
   const [password, setPassword] = useState("");
 
   return (
-    <SafeAreaView className="flex-1 bg-white">
+    <SafeAreaView className="flex-1 bg-white px-4">
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         className="flex-1"
@@ -61,9 +61,8 @@ export default function LoginScreen() {
                 method: "POST",
                 body: JSON.stringify({ email, password }),
               });
-
               await saveToken(data.token);
-              router.replace("/bookings");
+              router.replace("/(app)/bookingsTab");
             }}
           />
 

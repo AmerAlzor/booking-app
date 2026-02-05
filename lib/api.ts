@@ -14,13 +14,11 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
     headers,
   });
 
-  // Enklare felhantering
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(text || `HTTP ${res.status}`);
   }
 
-  // Om inget body
   const ct = res.headers.get("content-type") || "";
   if (!ct.includes("application/json")) return null;
   return res.json();
